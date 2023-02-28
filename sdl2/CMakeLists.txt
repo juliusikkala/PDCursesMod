@@ -63,6 +63,7 @@ sdl2_app(../demos testcurs)
 sdl2_app(../demos tuidemo)
 sdl2_app(../demos worm)
 sdl2_app(../demos xmas)
+sdl2_app(../demos benchmark)
 sdl2_app(./ sdltest)
 
 if(PDC_SDL2_DEPS_BUILD)
