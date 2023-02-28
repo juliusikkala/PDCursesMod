@@ -1,8 +1,6 @@
 /* PDCurses */
 
 #include "pdcgl.h"
-#define GLFUNC_IMPL
-#include "glfuncs.h"
 
 #include <stdlib.h>
 #include <limits.h>
@@ -27,46 +25,30 @@ int pdc_font_size =
 #else
  17;
 #endif
-int pdc_resize_mode = PDC_GL_RESIZE_NORMAL;
-int pdc_interpolation_mode = PDC_GL_INTERPOLATE_BILINEAR;
-int pdc_threading_mode = PDC_GL_MULTI_THREADED_RENDERING;
-
-Uint32 *pdc_glyph_cache[4] = {NULL, NULL, NULL, NULL};
+int *pdc_glyph_cache[4] = {NULL, NULL, NULL, NULL};
 int pdc_glyph_cache_size[4] = {0, 0, 0, 0};
-int pdc_glyph_row_capacity = 0, pdc_glyph_col_capacity = 0;
-int pdc_glyph_cache_w = 0, pdc_glyph_cache_h = 0;
-int* pdc_glyph_start_col = NULL;
-SDL_mutex *pdc_render_mutex = NULL;
-SDL_cond *pdc_render_cond = NULL;
+int pdc_glyph_index = 0;
+int pdc_glyph_capacity = 0;
 
 SDL_Window *pdc_window = NULL;
 SDL_Surface *pdc_icon = NULL;
 int pdc_sheight = 0, pdc_swidth = 0;
 
 int pdc_fheight, pdc_fwidth, pdc_fthick;
-unsigned pdc_color_buffer = 0, pdc_glyph_buffer = 0;
-unsigned pdc_background_shader_program = 0, pdc_foreground_shader_program = 0;
-unsigned pdc_font_texture = 0, pdc_render_target_texture = 0;
-unsigned pdc_tex_fbo = 0;
+GLuint pdc_vbo = 0;
+GLuint pdc_shader_program = 0;
+GLuint pdc_font_texture = 0;
 static GLuint pdc_vao = 0;
 
 static SDL_GLContext pdc_gl_context = NULL;
-static int pdc_render_thread_should_quit = 0;
-static SDL_Thread *pdc_render_thread = NULL;
-
-/* The same vertex shader is used in both shader programs, the one that draws
- * the background colors and the one that draws the foreground glyphs. Vertex
- * attribs are actually instance attributes here, and vertices are just
- * calculated on-the-fly instead of being read from a buffer.
- */
 static const char* pdc_vertex_shader_src =
-    "#version 330 core\n"
+    "#version 430 core\n"
     "layout(location = 0) in uint v_bg;\n"
     "layout(location = 1) in uint v_fg;\n"
-    "layout(location = 2) in uint v_glyph;\n"
+    "layout(location = 2) in int v_glyph;\n"
     "uniform ivec2 screen_size;\n"
     "out vertex_data {\n"
-    "    flat ivec2 glyph_offset;\n"
+    "    flat int glyph;\n"
     "    flat int attr;\n"
     "    vec3 bg;\n"
     "    vec3 fg;\n"
@@ -82,109 +64,59 @@ static const char* pdc_vertex_shader_src =
     ");\n"
     "void main(void)\n"
     "{\n"
-    "   int cell_index = gl_InstanceID;\n"
+    "   int cell_index = gl_VertexID/6;\n"
     "   vec2 uv = uv_table[gl_VertexID%6];\n"
     "   int x = cell_index % screen_size.x;\n"
     "   int y = cell_index / screen_size.x;\n"
-    "   uv.x *= float(v_glyph >> 30);\n"
     "   vec2 pos = 2.0f * (vec2(x, y)+uv)/vec2(screen_size) - 1.0f;\n"
     "   gl_Position = vec4(pos.x, -pos.y, 0.0f, 1.0f);\n"
-    "   v_out.glyph_offset = ivec2(int(v_glyph&0x7FFFu), int(v_glyph>>15u&0x7FFFu));\n"
+    "   v_out.glyph = v_glyph;\n"
     "   v_out.attr = int(v_fg>>24);\n"
-    "   v_out.bg = vec3((v_bg&0xFFu), (v_bg>>8u)&0xFFu, (v_bg>>16u)&0xFFu)/float(0xFF);\n"
-    "   v_out.fg = vec3((v_fg&0xFFu), (v_fg>>8u)&0xFFu, (v_fg>>16u)&0xFFu)/float(0xFF);\n"
+    "   v_out.bg = unpackUnorm4x8(v_bg).rgb;\n"
+    "   v_out.fg = unpackUnorm4x8(v_fg).rgb;\n"
     "   v_out.uv = uv;\n"
-    "}\n";
-
-static const char* pdc_background_fragment_shader_src =
-    "#version 330 core\n"
+    "}\n"
+    ;
+static const char* pdc_fragment_shader_src =
+    "#version 430 core\n"
     "in vertex_data {\n"
-    "    flat ivec2 glyph_offset;\n"
+    "    flat int glyph;\n"
     "    flat int attr;\n"
     "    vec3 bg;\n"
     "    vec3 fg;\n"
     "    vec2 uv;\n"
     "} v_in;\n"
     "out vec4 color;\n"
-    "void main(void)\n"
-    "{\n"
-    "   color = vec4(v_in.bg, 1.0f);\n"
-    "}\n";
-
-static const char* pdc_foreground_fragment_shader_src =
-    "#version 330 core\n"
-    "in vertex_data {\n"
-    "    flat ivec2 glyph_offset;\n"
-    "    flat int attr;\n"
-    "    vec3 bg;\n"
-    "    vec3 fg;\n"
-    "    vec2 uv;\n"
-    "} v_in;\n"
-    "out vec4 color;\n"
-    "uniform sampler2D glyphs;\n"
+    "uniform sampler2DArray glyphs;\n"
     "uniform int fthick;\n"
-    "uniform ivec2 glyph_size;\n"
-    "uniform vec3 line_color;\n"
     "void main(void)\n"
     "{\n"
-    "   float g_alpha = 0;\n"
-    "   ivec2 coord = ivec2(v_in.uv * glyph_size);\n"
-    "   if(v_in.glyph_offset.x > 0 || v_in.glyph_offset.y > 0)\n"
-    "       g_alpha = texelFetch(glyphs, v_in.glyph_offset * glyph_size + coord, 0).r;\n"
-    "   if(((v_in.attr & 1) != 0 && coord.y >= 0.75 * glyph_size.y) || (v_in.attr & 2) != 0)\n"
-    "       g_alpha = 1 - g_alpha;\n"
-    "   vec3 c = v_in.fg;\n"
+    "   vec4 g_color = vec4(0);\n"
+    "   ivec2 glyph_size = textureSize(glyphs, 0).xy;\n"
+    "   ivec2 coord = ivec2(gl_FragCoord.xy) % glyph_size;\n"
+    "   if(v_in.glyph >= 0)\n"
+    "       g_color = texture(glyphs, vec3(v_in.uv, v_in.glyph));\n"
+    "   if(((v_in.attr & 1) != 0 && v_in.uv.y > 0.75) || (v_in.attr & 2) != 0)\n"
+    "       g_color.a = 1 - g_color.a;\n"
     "   if(\n"
-    "       ((v_in.attr & (1<<2)) != 0 && coord.y >= glyph_size.y-fthick) ||\n" /* Underline */
-    "       ((v_in.attr & (1<<3)) != 0 && coord.y < fthick) ||\n" /* Overline */
-    "       ((v_in.attr & (1<<4)) != 0 && coord.y >= glyph_size.y/2-fthick && coord.y < glyph_size.y/2) ||\n" /* Strikeout */
-    "       ((v_in.attr & (1<<5)) != 0 && coord.x < fthick) ||\n" /* Left */
-    "       ((v_in.attr & (1<<6)) != 0 && coord.x >= glyph_size.x-fthick)\n" /* Right */
-    "   ){\n"
-    "       c = all(greaterThanEqual(line_color, vec3(0))) ? line_color : v_in.fg;\n"
-    "       g_alpha = 1.0f;\n"
-    "   }\n"
-    "   color = vec4(c, g_alpha);\n"
+    "       ((v_in.attr & (1<<2)) != 0 && coord.y < fthick) ||\n" // Underline
+    "       ((v_in.attr & (1<<3)) != 0 && coord.y >= glyph_size.y-fthick) ||\n" // Overline
+    "       ((v_in.attr & (1<<4)) != 0 && coord.y <= glyph_size.y/2 && coord.y > glyph_size.y/2-fthick) ||\n" // Strikeout
+    "       ((v_in.attr & (1<<5)) != 0 && coord.x < fthick) ||\n" // Left
+    "       ((v_in.attr & (1<<6)) != 0 && coord.x >= glyph_size.x-fthick)\n" // Right
+    "   ) g_color.a = 1;\n"
+    "   color = vec4(mix(v_in.bg, v_in.fg, g_color.a), 1.0f);\n"
     "}\n";
 
 static void _clean(void)
 {
-    if(pdc_threading_mode == PDC_GL_MULTI_THREADED_RENDERING)
-    {
-        SDL_LockMutex(pdc_render_mutex);
-        pdc_render_thread_should_quit = 1;
-        SDL_UnlockMutex(pdc_render_mutex);
-        SDL_CondBroadcast(pdc_render_cond);
-
-        if(pdc_render_thread)
-        {
-            SDL_WaitThread(pdc_render_thread, NULL);
-            pdc_render_thread = NULL;
-        }
-
-        /* Steal back the GL context */
-        SDL_GL_MakeCurrent(pdc_window, pdc_gl_context);
-
-        if(pdc_render_mutex)
-        {
-            SDL_DestroyMutex(pdc_render_mutex);
-            pdc_render_mutex = NULL;
-        }
-        if(pdc_render_cond)
-        {
-            SDL_DestroyCond(pdc_render_cond);
-            pdc_render_cond = NULL;
-        }
-    }
-
-    int i;
     if (pdc_ttffont)
     {
         TTF_CloseFont(pdc_ttffont);
         TTF_Quit();
         pdc_ttffont = NULL;
     }
-    for(i = 0; i < 4; ++i)
+    for(int i = 0; i < 4; ++i)
     {
         if(pdc_glyph_cache[i])
             free(pdc_glyph_cache[i]);
@@ -192,43 +124,34 @@ static void _clean(void)
         pdc_glyph_cache_size[i] = 0;
     }
 
-    if(pdc_glyph_start_col)
-    {
-        free(pdc_glyph_start_col);
-        pdc_glyph_start_col = NULL;
-    }
-
     if( pdc_icon)
         SDL_FreeSurface(pdc_icon);
+
     pdc_icon = NULL;
 
-    if(pdc_tex_fbo)
-        glDeleteFramebuffers(1, &pdc_tex_fbo);
-
     if(pdc_font_texture)
+    {
         glDeleteTextures(1, &pdc_font_texture);
-
-    if(pdc_render_target_texture)
-        glDeleteTextures(1, &pdc_render_target_texture);
+        pdc_font_texture = 0;
+    }
 
     if(pdc_vao)
+    {
         glDeleteVertexArrays(1, &pdc_vao);
+        pdc_vao = 0;
+    }
 
-    if(pdc_color_buffer)
-        glDeleteBuffers(1, &pdc_color_buffer);
+    if(pdc_vbo)
+    {
+        glDeleteBuffers(1, &pdc_vbo);
+        pdc_vbo = 0;
+    }
 
-    if(pdc_glyph_buffer)
-        glDeleteBuffers(1, &pdc_glyph_buffer);
-
-    if(pdc_foreground_shader_program)
-        glDeleteProgram(pdc_foreground_shader_program);
-
-    if(pdc_background_shader_program)
-        glDeleteProgram(pdc_background_shader_program);
-
-    pdc_tex_fbo = pdc_font_texture = pdc_render_target_texture = pdc_vao =
-        pdc_color_buffer = pdc_glyph_buffer = pdc_background_shader_program =
-        pdc_foreground_shader_program = 0;
+    if(pdc_shader_program)
+    {
+        glDeleteProgram(pdc_shader_program);
+        pdc_shader_program = 0;
+    }
 
     if(pdc_gl_context)
     {
@@ -246,24 +169,20 @@ static void _clean(void)
     pdc_sheight = pdc_swidth = 0;
 }
 
-static void add_shader(
-    GLuint shader_program,
-    GLenum shader_type,
-    const char* src
-){
-    GLint status = GL_FALSE;
+static void add_shader(GLenum shader_type, const char* src)
+{
     GLuint shader = glCreateShader(shader_type);
     glShaderSource(shader, 1, &src, NULL);
     glCompileShader(shader);
 
+    GLint status = GL_FALSE;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
 
     if(status != GL_TRUE)
     {
-        char* err;
         GLsizei length = 0;
         glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
-        err = malloc(length+1);
+        char* err = malloc(length+1);
         glGetShaderInfoLog(shader, length+1, &length, err);
         fprintf(stderr, "%s shader compilation error: %s\n",
             (shader_type == GL_VERTEX_SHADER ? "Vertex" : "Fragment"),
@@ -272,45 +191,8 @@ static void add_shader(
         exit(1);
     }
 
-    glAttachShader(shader_program, shader);
+    glAttachShader(pdc_shader_program, shader);
     glDeleteShader(shader);
-}
-
-static void build_shader_program(GLuint shader_program)
-{
-    GLint status = GL_FALSE;
-    glLinkProgram(shader_program);
-
-    glGetProgramiv(shader_program, GL_LINK_STATUS, &status);
-
-    if(status != GL_TRUE)
-    {
-        char* err;
-        GLsizei length = 0;
-        glGetProgramiv(shader_program, GL_INFO_LOG_LENGTH, &length);
-        err = malloc(length+1);
-        glGetProgramInfoLog(shader_program, length+1, &length, err);
-        fprintf(stderr, "Shader program linking: %s\n", err);
-        exit(1);
-    }
-}
-
-static int render_thread_worker(void *data)
-{
-    INTENTIONALLY_UNUSED_PARAMETER(data);
-
-    SDL_GL_MakeCurrent(pdc_window, pdc_gl_context);
-    for(;;)
-    {
-        int should_quit;
-        SDL_LockMutex(pdc_render_mutex);
-        should_quit = pdc_render_thread_should_quit;
-        SDL_UnlockMutex(pdc_render_mutex);
-        if(should_quit) break;
-        PDC_render_frame();
-    }
-    SDL_GL_MakeCurrent(pdc_window, NULL);
-    return 0;
 }
 
 void PDC_scr_close(void)
@@ -354,10 +236,9 @@ int _get_displaynum(void)
 
 int PDC_scr_open(void)
 {
+    SDL_Event event;
     int displaynum = 0;
-    int h, w;
     const char *ptsz, *fname;
-    Uint32 init_flags;
 
     PDC_LOG(("PDC_scr_open() - called\n"));
 
@@ -446,15 +327,11 @@ int PDC_scr_open(void)
     }
     pdc_swidth *= pdc_fwidth;
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(
-        SDL_GL_CONTEXT_PROFILE_MASK,
-        SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
 
     pdc_window = SDL_CreateWindow("PDCurses",
         SDL_WINDOWPOS_CENTERED_DISPLAY(displaynum),
@@ -470,10 +347,8 @@ int PDC_scr_open(void)
 
     SDL_SetWindowIcon(pdc_window, pdc_icon);
 
+    int h, w;
     SDL_GetWindowSize(pdc_window, &w, &h);
-
-    if (!pdc_sheight) pdc_sheight = h;
-    if (!pdc_swidth) pdc_swidth = w;
 
     pdc_gl_context = SDL_GL_CreateContext(pdc_window);
     if (pdc_gl_context == NULL)
@@ -483,87 +358,88 @@ int PDC_scr_open(void)
     }
     SDL_GL_MakeCurrent(pdc_window, pdc_gl_context);
 
-    SDL_GL_SetSwapInterval(
-        pdc_threading_mode == PDC_GL_MULTI_THREADED_RENDERING ? 1 : 0
-    );
+    SDL_GL_SetSwapInterval(0);
+    gladLoadGL(SDL_GL_GetProcAddress);
 
-    /* Load the GL functions we use. */
-    load_gl_funcs();
+    pdc_shader_program = glCreateProgram();
+    add_shader(GL_VERTEX_SHADER, pdc_vertex_shader_src);
+    add_shader(GL_FRAGMENT_SHADER, pdc_fragment_shader_src);
+    glLinkProgram(pdc_shader_program);
 
-    /* Build foreground shader. */
-    pdc_foreground_shader_program = glCreateProgram();
-    add_shader(
-        pdc_foreground_shader_program,
-        GL_VERTEX_SHADER,
-        pdc_vertex_shader_src
-    );
-    add_shader(
-        pdc_foreground_shader_program,
-        GL_FRAGMENT_SHADER,
-        pdc_foreground_fragment_shader_src
-    );
-    build_shader_program(pdc_foreground_shader_program);
+    GLint status = GL_FALSE;
+    glGetProgramiv(pdc_shader_program, GL_LINK_STATUS, &status);
 
-    /* Build background shader. */
-    pdc_background_shader_program = glCreateProgram();
-    add_shader(
-        pdc_background_shader_program,
-        GL_VERTEX_SHADER,
-        pdc_vertex_shader_src
-    );
-    add_shader(
-        pdc_background_shader_program,
-        GL_FRAGMENT_SHADER,
-        pdc_background_fragment_shader_src
-    );
-    build_shader_program(pdc_background_shader_program);
+    if(status != GL_TRUE)
+    {
+        GLsizei length = 0;
+        glGetProgramiv(pdc_shader_program, GL_INFO_LOG_LENGTH, &length);
+        char* err = malloc(length+1);
+        glGetProgramInfoLog(pdc_shader_program, length+1, &length, err);
+        fprintf(stderr, "Shader program linking: %s\n", err);
+        exit(1);
+    }
 
-    /* A VAO is just needed in OpenGL 3.3, even though we don't ever change the
-     * vertex attribs...
-     */
+    glUseProgram(pdc_shader_program);
+
     glGenVertexArrays(1, &pdc_vao);
     glBindVertexArray(pdc_vao);
 
-    glGenBuffers(1, &pdc_color_buffer);
-    glGenBuffers(1, &pdc_glyph_buffer);
-    glBindBuffer(GL_ARRAY_BUFFER, pdc_color_buffer);
+    glGenBuffers(1, &pdc_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, pdc_vbo);
 
-    /* See 'struct color_data' in pdcdisp.c, these map the contents of that
-     * struct into the vertex shader inputs.
-     */
     glEnableVertexAttribArray(0);
-    glVertexAttribIPointer(
-        0, 1, GL_INT, 2 * sizeof(Uint32), (void*)(0 * sizeof(Uint32)));
-    glVertexAttribDivisor(0, 1);
+    glVertexAttribIPointer(0, 1, GL_INT, 3 * sizeof(float), (void*)(0 * sizeof(float)));
     glEnableVertexAttribArray(1);
-    glVertexAttribIPointer(
-        1, 1, GL_INT, 2 * sizeof(Uint32), (void*)(1 * sizeof(Uint32)));
-    glVertexAttribDivisor(1, 1);
-
-    /* The glyph buffer is separate, because that makes rendering multiple
-     * character layers (needed for combining characters) faster and simpler.
-     */
-    glBindBuffer(GL_ARRAY_BUFFER, pdc_glyph_buffer);
+    glVertexAttribIPointer(1, 1, GL_INT, 3 * sizeof(float), (void*)(1 * sizeof(float)));
     glEnableVertexAttribArray(2);
-    glVertexAttribIPointer(2, 1, GL_INT, sizeof(Uint32), NULL);
-    glVertexAttribDivisor(2, 1);
+    glVertexAttribIPointer(2, 1, GL_INT, 3 * sizeof(float), (void*)(2 * sizeof(float)));
 
-    glUniform1i(
-        glGetUniformLocation(pdc_foreground_shader_program, "glyphs"), 0);
+    glGenTextures(1, &pdc_font_texture);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, pdc_font_texture);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    /* This FBO is not only used in the bilinear filtering mode, but also
-     * temporarily in various glyph cache operations.
-     */
-    glGenFramebuffers(1, &pdc_tex_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, pdc_tex_fbo);
-    glDrawBuffer(GL_COLOR_ATTACHMENT0);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-    /* Glyphs are alpha-blended on top of the background (and each other, if
-     * combing chars)
-     */
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    pdc_glyph_index = 0;
+    pdc_glyph_capacity = 256;
+    glTexImage3D(
+        GL_TEXTURE_2D_ARRAY,
+        0,
+        GL_RGBA8,
+        pdc_fwidth,
+        pdc_fheight,
+        pdc_glyph_capacity,
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        NULL
+    );
+
+    glUniform1i(glGetUniformLocation(pdc_shader_program, "glyphs"), 0);
+
+
+    /* Events must be pumped before calling SDL_GetWindowSurface, or
+       initial modifiers (e.g. numlock) will be ignored and out-of-sync. */
+
+    SDL_PumpEvents();
+
+    /* Wait until window is exposed before getting surface */
+
+    while (SDL_PollEvent(&event))
+        if (SDL_WINDOWEVENT == event.type &&
+            SDL_WINDOWEVENT_EXPOSED == event.window.event)
+            break;
+
+    if (!pdc_sheight)
+        pdc_sheight = h;
+
+    if (!pdc_swidth)
+        pdc_swidth = w;
 
     SDL_StartTextInput();
 
@@ -579,17 +455,6 @@ int PDC_scr_open(void)
 #endif
 
     PDC_reset_prog_mode();
-
-    if(pdc_threading_mode == PDC_GL_MULTI_THREADED_RENDERING)
-    {
-        SDL_GL_MakeCurrent(pdc_window, NULL);
-        pdc_render_mutex = SDL_CreateMutex();
-        pdc_render_cond = SDL_CreateCond();
-        pdc_render_thread_should_quit = 0;
-
-        pdc_render_thread = SDL_CreateThread(
-            render_thread_worker, "Rendering thread", NULL);
-    }
 
     return OK;
 }
@@ -692,67 +557,4 @@ void PDC_set_resize_limits( const int new_min_lines, const int new_max_lines,
    INTENTIONALLY_UNUSED_PARAMETER( new_max_lines);
    INTENTIONALLY_UNUSED_PARAMETER( new_min_cols);
    INTENTIONALLY_UNUSED_PARAMETER( new_max_cols);
-}
-
-SDL_Rect PDC_get_viewport(void)
-{
-    int content_w = SP->cols * pdc_fwidth;
-    int content_h = SP->lines * pdc_fheight;
-    int scale = 0;
-    int w, h;
-    SDL_Rect rect;
-
-    SDL_GetWindowSize(pdc_window, &w, &h);
-
-    switch(pdc_resize_mode)
-    {
-    case PDC_GL_RESIZE_NORMAL:
-        rect.x = 0;
-        rect.y = h-content_h;
-        rect.w = content_w;
-        rect.h = content_h;
-        break;
-
-    case PDC_GL_RESIZE_STRETCH:
-        rect.x = 0;
-        rect.y = 0;
-        rect.w = w;
-        rect.h = h;
-        break;
-
-    case PDC_GL_RESIZE_SCALE:
-        if(content_h == 0) content_h = 1;
-        if(content_w == 0) content_w = 1;
-        if(w * content_h < content_w * h)
-        {
-            scale = content_h * w / content_w;
-            rect.x = 0;
-            rect.y = (h - scale)/2;
-            rect.w = w;
-            rect.h = scale;
-        }
-        else
-        {
-            scale = content_w * h / content_h;
-            rect.x = (w - scale)/2;
-            rect.y = 0;
-            rect.w = scale;
-            rect.h = h;
-        }
-        break;
-
-    case PDC_GL_RESIZE_INTEGER:
-        if(content_h == 0) content_h = 1;
-        if(content_w == 0) content_w = 1;
-        scale = h/content_h < w/content_w ? h/content_h : w/content_w;
-        if(scale <= 0) scale = 1;
-        content_w = scale * content_w;
-        content_h = scale * content_h;
-        rect.x = (w-content_w)/2;
-        rect.y = (h-content_h)/2;
-        rect.w = content_w;
-        rect.h = content_h;
-        break;
-    }
-    return rect;
 }

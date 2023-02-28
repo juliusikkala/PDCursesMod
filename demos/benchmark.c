@@ -78,7 +78,7 @@ int main(int argc, char **argv)
             int y = 2*abs(row-LINES/2);
             int j = 16+(((x > y ? x : y) + steps) % n_colors);
             attrset(COLOR_PAIR(j));
-            mvaddch(row, col, 'a'+(j%26));
+            mvaddch(row, col, 'a'+((row+col+steps)%26));
         }
         mvprintw(LINES/2, COLS/2-20, "Press esc to quit. Update speed: %f", 1000000.0f/delta);
 
