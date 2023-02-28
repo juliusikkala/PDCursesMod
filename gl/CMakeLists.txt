@@ -56,6 +56,7 @@ gl_app(../demos testcurs)
 gl_app(../demos tuidemo)
 gl_app(../demos worm)
 gl_app(../demos xmas)
+gl_app(../demos benchmark)
 
 if(PDC_SDL2_DEPS_BUILD)
     add_dependencies(${PDCURSE_PROJ} sdl2_ext sdl2_ttf_ext)
