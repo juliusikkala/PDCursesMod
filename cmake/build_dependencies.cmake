@@ -19,23 +19,23 @@ IF (PDC_SDL2_DEPS_BUILD)
         CMAKE_ARGS
             ${SDL_CMAKE_BUILD_OPTS}
             -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-            -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}
+            -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}
             -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         )
 
-    MESSAGE(STATUS "SDL2 Installing to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}")
-    SET(SDL2_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}/include/SDL2)
-    SET(SDL2_LIBRARY_DIR ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}/lib)
+    MESSAGE(STATUS "SDL2 Installing to: ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}")
+    SET(SDL2_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/include/SDL2)
+    SET(SDL2_LIBRARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/lib)
     IF("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
         IF(WIN32)
-            set(SDL2_LIBRARIES "SDL2maind.lib;SDL2d.lib")
-            set(SDL2_LIBRARY "SDL2d.lib")
+            set(SDL2_LIBRARIES "SDL2main.lib;SDL2.lib")
+            set(SDL2_LIBRARY "SDL2.lib")
         ELSEIF(APPLE)
-            set(SDL2_LIBRARIES "SDL2maind;SDL2d")
-            set(SDL2_LIBRARY "SDL2d")
+            set(SDL2_LIBRARIES "SDL2main;SDL2")
+            set(SDL2_LIBRARY "SDL2")
         ELSE()
-            set(SDL2_LIBRARIES "SDL2maind;SDL2-2.0d")
-            set(SDL2_LIBRARY "SDL2-2.0d")
+            set(SDL2_LIBRARIES "SDL2main;SDL2-2.0")
+            set(SDL2_LIBRARY "SDL2-2.0")
         ENDIF()
     ELSE()
         IF(WIN32)
@@ -63,7 +63,7 @@ IF (PDC_SDL2_DEPS_BUILD)
             CMAKE_ARGS
                 ${ZLIB_CMAKE_BUILD_OPTS}
                 -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-                -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}
+                -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}
                 -DCMAKE_C_FLAGS=${EXTERNAL_C_FLAGS}
                 -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
                 -DBUILD_SHARED_LIBS=${BUILD_SHARED}
@@ -71,12 +71,12 @@ IF (PDC_SDL2_DEPS_BUILD)
                 -DASM686=${ZLIB_ASM686}
             )
 
-        MESSAGE(STATUS "zlib Installing to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}")
-        SET(ZLIB_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}/include)
-        SET(ZLIB_LIBRARY_DIR ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}/lib)
+        MESSAGE(STATUS "zlib Installing to: ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}")
+        SET(ZLIB_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/include)
+        SET(ZLIB_LIBRARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/lib)
         IF("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
             IF(WIN32)
-                set(ZLIB_LIBRARY zlibd.lib)
+                set(ZLIB_LIBRARY zlib.lib)
             ELSE()
                 set(ZLIB_LIBRARY z)
             ENDIF()
@@ -99,7 +99,7 @@ IF (PDC_SDL2_DEPS_BUILD)
             CMAKE_ARGS
                 ${FT2_CMAKE_BUILD_OPTS}
                 -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-                -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}
+                -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}
                 -DCMAKE_C_FLAGS=${FLAGS_FOR_DYNAMIC_LINK} ${EXTERNAL_C_FLAGS}
                 -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
                 -DFT_DISABLE_HARFBUZZ=ON
@@ -114,14 +114,14 @@ IF (PDC_SDL2_DEPS_BUILD)
             )
 
         ADD_DEPENDENCIES(freetype2_ext zlib_ext)
-        MESSAGE(STATUS "freetype2 Installing to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}")
-        SET(FT2_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}/include/freetype2)
-        SET(FT2_LIBRARY_DIR ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}/lib)
+        MESSAGE(STATUS "freetype2 Installing to: ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}")
+        SET(FT2_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/include/freetype2)
+        SET(FT2_LIBRARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/lib)
         IF("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
             IF(WIN32)
-                set(FT2_LIBRARY freetyped.lib)
+                set(FT2_LIBRARY freetype.lib)
             ELSE()
-                set(FT2_LIBRARY freetyped)
+                set(FT2_LIBRARY freetype)
             ENDIF()
         ELSE()
             IF(WIN32)
@@ -138,8 +138,8 @@ IF (PDC_SDL2_DEPS_BUILD)
             GIT_TAG "release-${SDL2_TTF_RELEASE}"
             GIT_SHALLOW true
             PATCH_COMMAND cmake -E copy 
-                ${CMAKE_SOURCE_DIR}/cmake/sdl2_ttf/CMakeLists.txt 
-                ${CMAKE_BINARY_DIR}/sdl2_ttf/CMakeLists.txt
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmake/sdl2_ttf/CMakeLists.txt 
+            ${CMAKE_BINARY_DIR}/sdl2_ttf/CMakeLists.txt
             UPDATE_COMMAND ""
             DOWNLOAD_DIR ${CMAKE_BINARY_DIR}
             SOURCE_DIR ${CMAKE_BINARY_DIR}/sdl2_ttf
@@ -147,7 +147,7 @@ IF (PDC_SDL2_DEPS_BUILD)
             CMAKE_ARGS
                 ${SDL2_TTF_CMAKE_BUILD_OPTS}
                 -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-                -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}
+                -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}
                 -DCMAKE_C_FLAGS=${EXTERNAL_C_FLAGS}
                 -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
                 -DSDL2_TTF_RELEASE=${SDL2_TTF_RELEASE}
@@ -164,12 +164,12 @@ IF (PDC_SDL2_DEPS_BUILD)
             )
 
         ADD_DEPENDENCIES(sdl2_ttf_ext sdl2_ext freetype2_ext)
-        MESSAGE(STATUS "SDL2_ttf Installing to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}")
-        SET(SDL2_TTF_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}/include/SDL2_ttf)
-        SET(SDL2_TTF_LIBRARY_DIR ${CMAKE_INSTALL_PREFIX}/${CMAKE_BUILD_TYPE}/lib)
+        MESSAGE(STATUS "SDL2_ttf Installing to: ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}")
+        SET(SDL2_TTF_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/include/SDL2_ttf)
+        SET(SDL2_TTF_LIBRARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/lib)
         IF("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
             IF(WIN32)
-                set(SDL2_TTF_LIBRARY "SDL2_ttfd.lib")
+                set(SDL2_TTF_LIBRARY "SDL2_ttf.lib")
             ELSE()
                 set(SDL2_TTF_LIBRARY "SDL2_ttf")
             ENDIF()
