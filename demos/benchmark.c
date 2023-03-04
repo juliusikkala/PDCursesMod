@@ -71,6 +71,8 @@ int main(int argc, char **argv)
     start = get_ticks();
     for(;;)
     {
+        unsigned long long end;
+        chtype ch;
         for(row = 0; row < LINES; ++row)
         for(col = 0; col < COLS; ++col)
         {
@@ -82,11 +84,11 @@ int main(int argc, char **argv)
         }
         mvprintw(LINES/2, COLS/2-20, "Press esc to quit. Update speed: %f", 1000000.0f/delta);
 
-        chtype ch = getch();
+        ch = getch();
         if(ch == 27)
             break;
 
-        unsigned long long end = get_ticks();
+        end = get_ticks();
         delta = end - start;
         start = end;
         steps++;
