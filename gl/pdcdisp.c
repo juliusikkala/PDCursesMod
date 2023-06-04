@@ -70,6 +70,11 @@ struct glyph_grid_layer
      */
     Uint32* codepoint_attr;
 };
+
+/* The `glyph_grid` members from `glyph_grid_layers` are only used in 
+ * single-threaded mode; multithreaded mode instead builds them in the render
+ * states below.
+ */
 static struct glyph_grid_layer* glyph_grid_layers = NULL;
 static int grid_w = 0, grid_h = 0, grid_layers = 0;
 static int cur_render_target_w = 0, cur_render_target_h = 0;
@@ -400,6 +405,27 @@ static void ensure_glyph_grid(int min_layers)
 
             free(glyph_grid_layers[layer].codepoint_attr);
             glyph_grid_layers[layer].codepoint_attr = new_codepoints;
+
+            if(pdc_threading_mode == PDC_GL_SINGLE_THREADED_RENDERING)
+            {
+                /* The grid will get fully rewritten right before rendering
+                 * anyway, so keeping its layout doesn't matter as long as all
+                 * the old glyphs are still there (they must be kept around to
+                 * know how to perform glyph cache eviction).
+                 */
+                glyph_grid_layers[layer].glyph_grid = realloc(
+                    glyph_grid_layers[layer].glyph_grid,
+                    size
+                );
+                if(old_size < size)
+                {
+                    /* Make sure the new additions are zero-initialized */
+                    memset(
+                        glyph_grid_layers[layer].glyph_grid + grid_w * grid_h,
+                        0, old_size - size
+                    );
+                }
+            }
         }
 
         grid_w = SP->cols;
@@ -778,6 +804,7 @@ void PDC_render_frame(void)
     int u_screen_size, u_glyph_size, u_fthick, u_line_color;
     SDL_Rect viewport;
     int layer;
+    struct glyph_grid_layer* layers;
 
     if(pdc_threading_mode == PDC_GL_MULTI_THREADED_RENDERING)
     {
@@ -795,7 +822,7 @@ void PDC_render_frame(void)
             }
         }
 
-        /* Swap committed_locked and the normal one. */
+        /* Swap locked_state and submitted_state. */
         memcpy(&tmp, &submitted_state, sizeof(struct mt_render_state));
         memcpy(&submitted_state, &locked_state, sizeof(struct mt_render_state));
         memcpy(&locked_state, &tmp, sizeof(struct mt_render_state));
@@ -807,7 +834,7 @@ void PDC_render_frame(void)
 
     viewport = locked_state.viewport;
 
-    struct glyph_grid_layer* layers = locked_state.glyph_grid_layers;
+    layers = locked_state.glyph_grid_layers;
 
     for(layer = 0; layer < locked_state.grid_layers; ++layer)
     {
