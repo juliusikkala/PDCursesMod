@@ -206,7 +206,10 @@ static void enlarge_glyph_cache()
             sizeof(int) * new_glyph_row_capacity
         );
         for(i = pdc_glyph_row_capacity; i < new_glyph_row_capacity; ++i)
-            pdc_glyph_start_col[i] = 0;
+        {
+            /* 0, 0 is reserved for empty characters. */
+            pdc_glyph_start_col[i] = i == 0 ? 1 : 0;
+        }
 
         pdc_glyph_row_capacity = new_glyph_row_capacity;
     }
