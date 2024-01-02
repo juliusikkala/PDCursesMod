@@ -15,7 +15,6 @@
 # include "../common/acs_defs.h"
 # include "../common/pdccolor.h"
 
-static chtype oldch = (chtype)(-1);    /* current attribute */
 static int foregr = -2, backgr = -2; /* current foreground, background */
 static bool blinked_off = FALSE;
 
@@ -643,36 +642,27 @@ static void _set_attr(chtype ch)
 
     ch &= (A_COLOR|A_BOLD|A_BLINK|A_REVERSE);
 
-    if (oldch != ch)
+    int newfg, newbg;
+
+    if (SP->mono)
+        return;
+
+    extended_pair_content(PAIR_NUMBER(ch), &newfg, &newbg);
+
+    if ((ch & A_BOLD) && !(sysattrs & A_BOLD))
+        newfg |= 8;
+    if ((ch & A_BLINK) && !(sysattrs & A_BLINK))
+        newbg |= 8;
+
+    if (ch & A_REVERSE)
     {
-        int newfg, newbg;
-
-        if (SP->mono)
-            return;
-
-        extended_pair_content(PAIR_NUMBER(ch), &newfg, &newbg);
-
-        if ((ch & A_BOLD) && !(sysattrs & A_BOLD))
-            newfg |= 8;
-        if ((ch & A_BLINK) && !(sysattrs & A_BLINK))
-            newbg |= 8;
-
-        if (ch & A_REVERSE)
-        {
-            int tmp = newfg;
-            newfg = newbg;
-            newbg = tmp;
-        }
-
-        foregr = newfg;
-
-        if (newbg != backgr)
-        {
-            backgr = newbg;
-        }
-
-        oldch = ch;
+        int tmp = newfg;
+        newfg = newbg;
+        newbg = tmp;
     }
+
+    foregr = newfg;
+    backgr = newbg;
 }
 
 /* draw a cursor at (y, x) */
@@ -764,8 +754,6 @@ void PDC_blink_text(void)
     static SDL_TimerID blinker_id = 0;
     int i, j, k;
 
-    oldch = (chtype)(-1);
-
     if (!(SP->termattrs & A_BLINK))
     {
         SDL_RemoveTimer(blinker_id);
@@ -793,8 +781,6 @@ void PDC_blink_text(void)
                 j = k;
             }
     }
-
-    oldch = (chtype)(-1);
 
     PDC_doupdate();
 }
