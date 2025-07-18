@@ -7,7 +7,7 @@ IF (PDC_SDL2_DEPS_BUILD)
         set(FLAGS_FOR_DYNAMIC_LINK -fPIC) 
     ENDIF()
 
-    SET(SDL2_RELEASE 2.26.2)
+    SET(SDL2_RELEASE 2.32.8)
     ExternalProject_Add(sdl2_ext
         GIT_REPOSITORY "https://github.com/libsdl-org/SDL.git"
         GIT_TAG "release-${SDL2_RELEASE}"
